@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Everyuone is sound</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js" crossorigin="anonymous"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background-color: #000;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+        }
+        
+        .container {
+            min-height: 100vh;
+            padding: 2rem;
+        }
+        
+        .max-w {
+            max-width: 95%;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            font-size: 1.875rem;
+            font-weight: bold;
+            margin-bottom: 1.5rem;
+            text-align: center;
+        }
+        
+        .controls {
+            margin-bottom: 1.5rem;
+        }
+        
+        .button-container {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin-bottom: 1rem;
+        }
+        
+        button {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 0.5rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            font-size: 1rem;
+        }
+        
+        .start-btn {
+            background-color: #16a34a;
+            color: white;
+        }
+        
+        .start-btn:hover {
+            background-color: #15803d;
+        }
+        
+        .stop-btn {
+            background-color: #dc2626;
+            color: white;
+        }
+        
+        .stop-btn:hover {
+            background-color: #b91c1c;
+        }
+        
+        .slider-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 1rem;
+        }
+        
+        .slider-container label {
+            font-size: 0.875rem;
+        }
+        
+        input[type="range"] {
+            width: 16rem;
+        }
+        
+        .slider-container span {
+            font-size: 0.875rem;
+            width: 3rem;
+        }
+        
+        .error {
+            margin-bottom: 1rem;
+            padding: 1rem;
+            background-color: #7f1d1d;
+            border: 1px solid #991b1b;
+            border-radius: 0.5rem;
+            text-align: center;
+        }
+        
+        .ascii-output {
+            background-color: #000;
+            border: 1px solid #374151;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            overflow: auto;
+            min-height: 75vh;
+            width: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        pre {
+            font-family: monospace;
+            color: white;
+            font-size: 14px;
+            line-height: 14px;
+            white-space: pre;
+            text-align: center;
+            margin: 0;
+        }
+        
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useRef, useEffect } = React;
+
+        function AsciiCamera() {
+            const [isStreaming, setIsStreaming] = useState(false);
+            const [asciiArt, setAsciiArt] = useState('');
+            const [resolution, setResolution] = useState(100);
+            const [error, setError] = useState('');
+            const [backgroundRemoval, setBackgroundRemoval] = useState(true);
+            const [musicEnabled, setMusicEnabled] = useState(true);
+            const [isRecording, setIsRecording] = useState(false);
+            
+            const videoRef = useRef(null);
+            const canvasRef = useRef(null);
+            const segmentationCanvasRef = useRef(null);
+            const motionCanvasRef = useRef(null);
+            const streamRef = useRef(null);
+            const animationRef = useRef(null);
+            const selfieSegmentationRef = useRef(null);
+            const audioContextRef = useRef(null);
+            const previousFrameRef = useRef(null);
+            const oscillatorsRef = useRef([]);
+            const mediaRecorderRef = useRef(null);
+            const recordedChunksRef = useRef([]);
+            const recordingCanvasRef = useRef(null);
+            const recordingStreamRef = useRef(null);
+
+            const ASCII_CHARS = ' .:-=+*#%@';
+            
+            // Musical scales and frequencies
+            const PENTATONIC_SCALE = [261.63, 293.66, 329.63, 392.00, 440.00, 523.25]; // C major pentatonic
+            const MOTION_THRESHOLD = 50; // Increased threshold to reduce noise
+            const MAX_SIMULTANEOUS_NOTES = 3; // Limit concurrent notes
+            const NOTE_COOLDOWN = 200; // Minimum time between notes in ms
+            
+            const lastNoteTimeRef = useRef(0);
+            const activeNotesRef = useRef(0);
+            const audioDestinationRef = useRef(null);
+            
+            const initializeAudio = () => {
+                if (!audioContextRef.current) {
+                    audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+                    // Create destination for recording
+                    audioDestinationRef.current = audioContextRef.current.createMediaStreamDestination();
+                }
+            };
+            
+            const playNote = (frequency, duration = 0.4, volume = 0.08) => {
+                if (!audioContextRef.current || !musicEnabled) return;
+                if (activeNotesRef.current >= MAX_SIMULTANEOUS_NOTES) return;
+                
+                const now = Date.now();
+                if (now - lastNoteTimeRef.current < NOTE_COOLDOWN) return;
+                
+                lastNoteTimeRef.current = now;
+                activeNotesRef.current++;
+                
+                const oscillator = audioContextRef.current.createOscillator();
+                const gainNode = audioContextRef.current.createGain();
+                const filterNode = audioContextRef.current.createBiquadFilter();
+                
+                // Add low-pass filter to make sound warmer
+                filterNode.type = 'lowpass';
+                filterNode.frequency.setValueAtTime(800, audioContextRef.current.currentTime);
+                filterNode.Q.setValueAtTime(1, audioContextRef.current.currentTime);
+                
+                oscillator.connect(filterNode);
+                filterNode.connect(gainNode);
+                gainNode.connect(audioContextRef.current.destination);
+                
+                // Also connect to recording destination if recording
+                if (isRecording && audioDestinationRef.current) {
+                    gainNode.connect(audioDestinationRef.current);
+                }
+                
+                oscillator.frequency.setValueAtTime(frequency, audioContextRef.current.currentTime);
+                oscillator.type = 'triangle'; // Warmer sound than sine
+                
+                // Smoother envelope
+                gainNode.gain.setValueAtTime(0, audioContextRef.current.currentTime);
+                gainNode.gain.linearRampToValueAtTime(volume, audioContextRef.current.currentTime + 0.05);
+                gainNode.gain.linearRampToValueAtTime(volume * 0.7, audioContextRef.current.currentTime + duration * 0.3);
+                gainNode.gain.exponentialRampToValueAtTime(0.001, audioContextRef.current.currentTime + duration);
+                
+                oscillator.start(audioContextRef.current.currentTime);
+                oscillator.stop(audioContextRef.current.currentTime + duration);
+                
+                oscillatorsRef.current.push(oscillator);
+                
+                // Clean up old oscillators
+                setTimeout(() => {
+                    const index = oscillatorsRef.current.indexOf(oscillator);
+                    if (index > -1) {
+                        oscillatorsRef.current.splice(index, 1);
+                    }
+                    activeNotesRef.current = Math.max(0, activeNotesRef.current - 1);
+                 }, duration * 1000);
+             };
+            
+            const startRecording = async () => {
+                if (!videoRef.current || isRecording) return;
+                
+                try {
+                    // Create a canvas for recording that combines video and ASCII
+                    const recordingCanvas = recordingCanvasRef.current;
+                    const ctx = recordingCanvas.getContext('2d');
+                    recordingCanvas.width = 1280;
+                    recordingCanvas.height = 720;
+                    
+                    // Get video stream from canvas
+                    const videoStream = recordingCanvas.captureStream(30);
+                    
+                    // Combine video and audio streams
+                    let combinedStream;
+                    if (musicEnabled && audioDestinationRef.current) {
+                        const audioStream = audioDestinationRef.current.stream;
+                        combinedStream = new MediaStream([
+                            ...videoStream.getVideoTracks(),
+                            ...audioStream.getAudioTracks()
+                        ]);
+                    } else {
+                        combinedStream = videoStream;
+                    }
+                    
+                    recordingStreamRef.current = combinedStream;
+                    
+                    // Setup MediaRecorder
+                    mediaRecorderRef.current = new MediaRecorder(combinedStream, {
+                        mimeType: 'video/webm;codecs=vp9,opus'
+                    });
+                    
+                    recordedChunksRef.current = [];
+                    
+                    mediaRecorderRef.current.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                            recordedChunksRef.current.push(event.data);
+                        }
+                    };
+                    
+                    mediaRecorderRef.current.onstop = () => {
+                        const blob = new Blob(recordedChunksRef.current, {
+                            type: 'video/webm'
+                        });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `ascii-video-${Date.now()}.webm`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(url);
+                    };
+                    
+                    mediaRecorderRef.current.start();
+                    setIsRecording(true);
+                    
+                } catch (error) {
+                    console.error('Error starting recording:', error);
+                    alert('Error al iniciar la grabación: ' + error.message);
+                }
+            };
+            
+            const stopRecording = () => {
+                if (mediaRecorderRef.current && isRecording) {
+                    mediaRecorderRef.current.stop();
+                    setIsRecording(false);
+                    
+                    // Stop all tracks
+                    if (recordingStreamRef.current) {
+                        recordingStreamRef.current.getTracks().forEach(track => track.stop());
+                    }
+                }
+            };
+            
+            const updateRecordingCanvas = () => {
+                if (!isRecording || !recordingCanvasRef.current || !videoRef.current || !canvasRef.current) return;
+                
+                const recordingCanvas = recordingCanvasRef.current;
+                const ctx = recordingCanvas.getContext('2d');
+                const video = videoRef.current;
+                const asciiCanvas = canvasRef.current;
+                
+                // Clear canvas
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(0, 0, recordingCanvas.width, recordingCanvas.height);
+                
+                // Draw original video (smaller, in corner)
+                const videoWidth = 320;
+                const videoHeight = 240;
+                ctx.drawImage(video, recordingCanvas.width - videoWidth - 20, 20, videoWidth, videoHeight);
+                
+                // Draw ASCII art (main area)
+                const asciiWidth = recordingCanvas.width - videoWidth - 60;
+                const asciiHeight = recordingCanvas.height - 40;
+                ctx.drawImage(asciiCanvas, 20, 20, asciiWidth, asciiHeight);
+                
+                // Add recording indicator
+                ctx.fillStyle = '#ff0000';
+                ctx.beginPath();
+                ctx.arc(30, recordingCanvas.height - 30, 10, 0, 2 * Math.PI);
+                ctx.fill();
+                
+                ctx.fillStyle = '#ffffff';
+                ctx.font = '16px Arial';
+                ctx.fillText('REC', 50, recordingCanvas.height - 25);
+            };
+
+            const detectMotion = (currentFrame) => {
+                if (!previousFrameRef.current || !motionCanvasRef.current) {
+                    previousFrameRef.current = currentFrame;
+                    return [];
+                }
+                
+                const canvas = motionCanvasRef.current;
+                const ctx = canvas.getContext('2d');
+                canvas.width = currentFrame.width;
+                canvas.height = currentFrame.height;
+                
+                const currentData = currentFrame.data;
+                const previousData = previousFrameRef.current.data;
+                const motionAreas = [];
+                
+                const gridSize = 40;
+                const cols = Math.floor(canvas.width / gridSize);
+                const rows = Math.floor(canvas.height / gridSize);
+                
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < cols; x++) {
+                        let motionIntensity = 0;
+                        let pixelCount = 0;
+                        
+                        for (let py = y * gridSize; py < (y + 1) * gridSize && py < canvas.height; py++) {
+                            for (let px = x * gridSize; px < (x + 1) * gridSize && px < canvas.width; px++) {
+                                const index = (py * canvas.width + px) * 4;
+                                
+                                const currentR = currentData[index];
+                                const currentG = currentData[index + 1];
+                                const currentB = currentData[index + 2];
+                                
+                                const previousR = previousData[index];
+                                const previousG = previousData[index + 1];
+                                const previousB = previousData[index + 2];
+                                
+                                const diff = Math.abs(currentR - previousR) + 
+                                           Math.abs(currentG - previousG) + 
+                                           Math.abs(currentB - previousB);
+                                
+                                motionIntensity += diff;
+                                pixelCount++;
+                            }
+                        }
+                        
+                        const avgMotion = motionIntensity / pixelCount;
+                        
+                        if (avgMotion > MOTION_THRESHOLD) {
+                            motionAreas.push({
+                                x: x,
+                                y: y,
+                                intensity: avgMotion,
+                                normalizedX: x / cols,
+                                normalizedY: y / rows
+                            });
+                        }
+                    }
+                }
+                
+                previousFrameRef.current = currentFrame;
+                return motionAreas;
+            };
+            
+            const generateMusicFromMotion = (motionAreas) => {
+                if (!musicEnabled || motionAreas.length === 0) return;
+                
+                // Sort by intensity and take only the strongest motions
+                const sortedAreas = motionAreas
+                    .sort((a, b) => b.intensity - a.intensity)
+                    .slice(0, MAX_SIMULTANEOUS_NOTES);
+                
+                // Group nearby areas to avoid too many simultaneous notes
+                const groupedAreas = [];
+                sortedAreas.forEach(area => {
+                    const existing = groupedAreas.find(group => 
+                        Math.abs(group.normalizedX - area.normalizedX) < 0.2 &&
+                        Math.abs(group.normalizedY - area.normalizedY) < 0.2
+                    );
+                    
+                    if (existing) {
+                        // Merge with existing group (take stronger intensity)
+                        if (area.intensity > existing.intensity) {
+                            existing.normalizedX = area.normalizedX;
+                            existing.normalizedY = area.normalizedY;
+                            existing.intensity = area.intensity;
+                        }
+                    } else {
+                        groupedAreas.push(area);
+                    }
+                });
+                
+                groupedAreas.forEach((area, index) => {
+                    // Map position to musical notes with quantization
+                    const noteIndex = Math.floor(area.normalizedX * PENTATONIC_SCALE.length);
+                    let frequency = PENTATONIC_SCALE[noteIndex];
+                    
+                    // Subtle octave variation based on Y position
+                    if (area.normalizedY < 0.3) {
+                        frequency *= 0.5; // Lower octave
+                    } else if (area.normalizedY > 0.7) {
+                        frequency *= 2; // Higher octave
+                    }
+                    
+                    // Map intensity to volume with better scaling
+                    const volume = Math.min(Math.max(area.intensity / 300, 0.02), 0.12);
+                    
+                    // Staggered timing for harmony
+                    setTimeout(() => {
+                        playNote(frequency, 0.6, volume);
+                    }, index * 150);
+                });
+            };
+
+            const initializeSelfieSegmentation = () => {
+                if (window.SelfieSegmentation) {
+                    const selfieSegmentation = new window.SelfieSegmentation({
+                        locateFile: (file) => {
+                            return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`;
+                        }
+                    });
+                    
+                    selfieSegmentation.setOptions({
+                        modelSelection: 1,
+                        selfieMode: true,
+                    });
+                    
+                    selfieSegmentation.onResults((results) => {
+                        if (results.segmentationMask && segmentationCanvasRef.current) {
+                            const canvas = segmentationCanvasRef.current;
+                            const ctx = canvas.getContext('2d');
+                            
+                            canvas.width = results.image.width;
+                            canvas.height = results.image.height;
+                            
+                            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                            
+                            if (backgroundRemoval) {
+                                // Draw the original image
+                                ctx.drawImage(results.image, 0, 0);
+                                
+                                // Apply mask to remove background
+                                ctx.globalCompositeOperation = 'destination-in';
+                                ctx.drawImage(results.segmentationMask, 0, 0);
+                                ctx.globalCompositeOperation = 'source-over';
+                            } else {
+                                ctx.drawImage(results.image, 0, 0);
+                            }
+                        }
+                    });
+                    
+                    selfieSegmentationRef.current = selfieSegmentation;
+                }
+            };
+
+            const startCamera = async () => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ 
+                        video: { facingMode: 'user' } 
+                    });
+                    
+                    if (videoRef.current) {
+                        videoRef.current.srcObject = stream;
+                        streamRef.current = stream;
+                        setIsStreaming(true);
+                        setError('');
+                        
+                        // Initialize selfie segmentation and audio
+                        initializeSelfieSegmentation();
+                        initializeAudio();
+                    }
+                } catch (err) {
+                    setError('Camera access denied. Please allow camera permissions.');
+                    console.error('Error accessing camera:', err);
+                }
+            };
+
+            const stopCamera = () => {
+                if (streamRef.current) {
+                    streamRef.current.getTracks().forEach(track => track.stop());
+                    streamRef.current = null;
+                }
+                if (animationRef.current) {
+                    cancelAnimationFrame(animationRef.current);
+                }
+                setIsStreaming(false);
+                setAsciiArt('');
+            };
+
+            const convertToAscii = async () => {
+                const video = videoRef.current;
+                const canvas = canvasRef.current;
+                
+                if (!video || !canvas || !isStreaming) return;
+
+                // Process with selfie segmentation if enabled
+                if (backgroundRemoval && selfieSegmentationRef.current) {
+                    await selfieSegmentationRef.current.send({image: video});
+                }
+
+                const ctx = canvas.getContext('2d');
+                
+                const cols = Math.floor(resolution / 2);
+                const rows = Math.floor(resolution / 3);
+                
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                
+                // Use segmented image if background removal is enabled
+                const sourceCanvas = backgroundRemoval && segmentationCanvasRef.current ? 
+                    segmentationCanvasRef.current : video;
+                
+                ctx.drawImage(sourceCanvas, 0, 0, canvas.width, canvas.height);
+                
+                // Detect motion and generate music
+                if (musicEnabled) {
+                    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    const motionAreas = detectMotion(imageData);
+                    generateMusicFromMotion(motionAreas);
+                }
+                
+                // Update recording canvas if recording
+                if (isRecording) {
+                    updateRecordingCanvas();
+                }
+                
+                const cellWidth = canvas.width / cols;
+                const cellHeight = canvas.height / rows;
+                
+                let ascii = '';
+                
+                for (let y = 0; y < rows; y++) {
+                    for (let x = 0; x < cols; x++) {
+                        const cellX = Math.floor(x * cellWidth);
+                        const cellY = Math.floor(y * cellHeight);
+                        const imageData = ctx.getImageData(cellX, cellY, Math.ceil(cellWidth), Math.ceil(cellHeight));
+                        
+                        let brightness = 0;
+                        let alpha = 0;
+                        const pixels = imageData.data;
+                        for (let i = 0; i < pixels.length; i += 4) {
+                            const r = pixels[i];
+                            const g = pixels[i + 1];
+                            const b = pixels[i + 2];
+                            const a = pixels[i + 3];
+                            brightness += (r + g + b) / 3;
+                            alpha += a;
+                        }
+                        brightness = brightness / (pixels.length / 4);
+                        alpha = alpha / (pixels.length / 4);
+                        
+                        // If pixel is transparent (background removed), use space
+                        if (backgroundRemoval && alpha < 128) {
+                            ascii += ' ';
+                        } else {
+                            const charIndex = Math.floor((brightness / 255) * (ASCII_CHARS.length - 1));
+                            ascii += ASCII_CHARS[charIndex];
+                        }
+                    }
+                    ascii += '\n';
+                }
+                
+                setAsciiArt(ascii);
+                animationRef.current = requestAnimationFrame(convertToAscii);
+            };
+
+            useEffect(() => {
+                if (isStreaming && videoRef.current) {
+                    const video = videoRef.current;
+                    const handleLoadedMetadata = () => {
+                        convertToAscii();
+                    };
+                    video.addEventListener('loadedmetadata', handleLoadedMetadata);
+                    
+                    return () => {
+                        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+                    };
+                }
+                
+                return () => {
+                    if (animationRef.current) {
+                        cancelAnimationFrame(animationRef.current);
+                    }
+                };
+            }, [isStreaming, resolution]);
+
+            const CameraIcon = () => (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"></path>
+                    <circle cx="12" cy="13" r="3"></circle>
+                </svg>
+            );
+
+            const CameraOffIcon = () => (
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="1" y1="1" x2="23" y2="23"></line>
+                    <path d="M21 21H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h3m3-3h6l2.5 3H21a2 2 0 0 1 2 2v9.34m-7.72-2.06a4 4 0 1 1-5.56-5.56"></path>
+                </svg>
+            );
+
+            return (
+                <div className="container">
+                    <div className="max-w">
+                        <h1>Everyone can sound</h1>
+                        
+                        <div className="controls">
+                            <div className="button-container">
+                                {!isStreaming ? (
+                                    <button onClick={startCamera} className="start-btn">
+                                        <CameraIcon />
+                                        Start Camera
+                                    </button>
+                                ) : (
+                                    <button onClick={stopCamera} className="stop-btn">
+                                        <CameraOffIcon />
+                                        Stop Camera
+                                    </button>
+                                )}
+                            </div>
+                            
+                            <div className="slider-container">
+                                <label>Detail Level:</label>
+                                <input
+                                    type="range"
+                                    min="40"
+                                    max="200"
+                                    value={resolution}
+                                    onChange={(e) => setResolution(Number(e.target.value))}
+                                />
+                                <span>{resolution}</span>
+                            </div>
+                            
+                            <div className="slider-container" style={{marginTop: '1rem'}}>
+                                <label>
+                                    <input
+                                        type="checkbox"
+                                        checked={backgroundRemoval}
+                                        onChange={(e) => setBackgroundRemoval(e.target.checked)}
+                                        style={{marginRight: '0.5rem'}}
+                                    />
+                                    Remove Background
+                                 </label>
+                             </div>
+                             
+                             <div className="slider-container" style={{marginTop: '1rem'}}>
+                                 <label>
+                                     <input
+                                         type="checkbox"
+                                         checked={musicEnabled}
+                                         onChange={(e) => setMusicEnabled(e.target.checked)}
+                                         style={{marginRight: '0.5rem'}}
+                                     />
+                                     Generate Music from Motion
+                                 </label>
+                             </div>
+                             
+                             <div className="slider-container" style={{marginTop: '1rem'}}>
+                                 <button
+                                     onClick={isRecording ? stopRecording : startRecording}
+                                     disabled={!isStreaming}
+                                     style={{
+                                         padding: '10px 20px',
+                                         backgroundColor: isRecording ? '#dc3545' : '#28a745',
+                                         color: 'white',
+                                         border: 'none',
+                                         borderRadius: '5px',
+                                         cursor: isStreaming ? 'pointer' : 'not-allowed',
+                                         fontSize: '14px'
+                                     }}
+                                 >
+                                     {isRecording ? '⏹️ Detener Grabación' : '🎥 Iniciar Grabación'}
+                                 </button>
+                                 {isRecording && (
+                                     <span style={{ marginLeft: '10px', color: '#dc3545', fontWeight: 'bold' }}>
+                                          🔴 Grabando...
+                                      </span>
+                                 )}
+                             </div>
+                        </div>
+
+                        {error && (
+                            <div className="error">{error}</div>
+                        )}
+
+                        <div className="ascii-output">
+                            <pre>{asciiArt || 'Click "Start Camera" to begin...'}</pre>
+                        </div>
+
+                        <video ref={videoRef} autoPlay playsInline className="hidden" />
+                        <canvas ref={canvasRef} className="hidden" />
+                        <canvas ref={segmentationCanvasRef} className="hidden" />
+                        <canvas ref={motionCanvasRef} className="hidden" />
+                        <canvas ref={recordingCanvasRef} className="hidden" />
+                    </div>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<AsciiCamera />);
+    </script>
+</body>
+</html>
