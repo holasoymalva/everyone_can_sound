@@ -139,6 +139,32 @@
         .hidden {
             display: none;
         }
+        
+        .footer {
+            margin-top: 2rem;
+            padding: 1.5rem 0;
+            border-top: 1px solid #374151;
+            text-align: center;
+        }
+        
+        .footer a {
+            color: #60a5fa;
+            text-decoration: none;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+        
+        .footer a:hover {
+            color: #93c5fd;
+        }
+        
+        .footer-content {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+        }
     </style>
 </head>
 <body>
@@ -744,6 +770,19 @@
                         <canvas ref={motionCanvasRef} className="hidden" />
                         <canvas ref={recordingCanvasRef} className="hidden" />
                     </div>
+                    
+                    <footer className="footer">
+                        <div className="footer-content">
+                            <span>🎵 Made with ❤️ by</span>
+                            <a href="https://github.com/holasoymalva/everyone_can_sound" target="_blank" rel="noopener noreferrer">
+                                @holasoymalva
+                            </a>
+                            <span>•</span>
+                            <a href="https://github.com/holasoymalva/everyone_can_sound" target="_blank" rel="noopener noreferrer">
+                                ⭐ Star on GitHub
+                            </a>
+                        </div>
+                    </footer>
                 </div>
             );
         }
