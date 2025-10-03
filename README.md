@@ -229,8 +229,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 - **GitHub**: [@holasoymalva](https://github.com/holasoymalva)
 - **Issues**: [Report bugs or request features](https://github.com/holasoymalva/everyone_can_sound/issues)
-- **Discussions**: [Join the community](https://github.com/holasoymalva/everyone_can_sound/discussions)
-
 ---
 
 <div align="center">
